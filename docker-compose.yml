@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension enabled
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: synapse-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: synapse_rag
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/main/resources/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d synapse_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for Semantic Query Caching & Rate Limiting
+  redis:
+    image: redis/redis-stack:latest
+    container_name: synapse-redis
+    restart: always
+    ports:
+      - "6379:6379"
+      - "8001:8001" # Redis Insight UI
+    environment:
+      - REDIS_ARGS=--save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Apache Kafka in KRaft mode (No Zookeeper dependency required)
+  kafka:
+    image: bitnami/kafka:3.7.0
+    container_name: synapse-kafka
+    restart: always
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+
+  # Kafka UI for visual monitoring of topics, consumer lag, and DLT
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: synapse-kafka-ui
+    ports:
+      - "8085:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=synapse-cluster
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    depends_on:
+      - kafka
+
+volumes:
+  pgdata:
